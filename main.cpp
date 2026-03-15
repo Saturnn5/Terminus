@@ -25,7 +25,7 @@ enum Difficulty {
 #define SLIMY (1 << 7)          // you act 10 ticks slower
 // status flags
 #define GUILD_MEMBER (1 << 2)
-#define BEGINNER_WILDS_EXPERT (1 << 3)\
+#define BEGINNER_WILDS_EXPERT (1 << 3)
 
 typedef struct {
     char name[NAME_LEN];
@@ -57,16 +57,11 @@ typedef struct {
     int guild_reputation;
 
     // statuses
+    int position_id;
     unsigned int status_flags;
 } Player;
 
-// Used to define world actions such as picking herbs or fishing
-typedef struct {
-    const char *name;
-    void(*action_func)(void);
-} Action;
-
-// Used to denote the data type of a stat in the stat table
+// Used to denote the data type of stat in the stat table
 typedef enum {
     STAT_INT,
     STAT_STRING
@@ -95,38 +90,138 @@ StatEntry stat_table[] = {
 #define STAT_COUNT (sizeof(stat_table)/sizeof(StatEntry))
 #define LEVELING_STAT_COUNT 5
 
-Player p;
-const char* difficulty_names[4] = {"Easy", "Normal", "Challenge", "Nightmare"};
-const float difficulty_nums[4] = {0.8, 1.0, 1.2, 1.5};
+typedef void (*action_type)(Player *, void *);
 
-void beginning_town_menu();
+// Used to define world actions such as picking herbs or fishing
+typedef struct {
+    const char *name;
+    action_type action_func;
+} Action;
+
+typedef struct {
+    const char *name;
+    const char *description;
+    int *connections;
+    Action *region_actions;
+} Region;
+
+void region_menu(Player *);
+
+void go_to(Player *, int id);
+
+void admire(Player *, Region *);
+
+void talk_to_receptionist(Player *, Region *);
+
+void talk_to_bartender(Player *, Region *);
+
+void explore(Player *, Region *);
+
+void forage(Player *, Region *);
+
+void fish(Player *, Region *);
+
+void battle(Player *, Region *);
+
+void menu_menu(Player *, Region *);
+
+void become_beginner_wilds_expert(Player *, const char *);
+
+#define NUM_REGIONS 5
+Region world[NUM_REGIONS] = {
+    {
+        "Town of Beginnings",
+        "You are in your home town, the Town of Beginnings",
+        (int[]){
+            1, 4, -1
+        },
+        (Action[]){
+            {"Look around", (action_type) admire},
+            {"Open menu", (action_type) menu_menu},
+            {nullptr, nullptr}
+        }
+    },
+    {
+        "Town of Beginnings Guild Hall",
+        "You are in the guild hall of your home town",
+        (int[]){
+            0, 2, 3, -1
+        },
+        (Action[]){
+            {"Look around", (action_type) admire},
+            {"Open menu", (action_type) menu_menu},
+            {nullptr, nullptr}
+        }
+    },
+    {
+        "Town of Beginnings Guild Hall Desk",
+        "You are speaking to the guild receptionist",
+        (int[]){
+            1, -1
+        },
+        (Action[]){
+            {"Talk to guild receptionist", (action_type) talk_to_receptionist},
+            {"Open menu", (action_type) menu_menu},
+            {nullptr, nullptr}
+        }
+    },
+    {
+        "Town of Beginnings Guild Hall Bar",
+        "You're at the guild's bar",
+        (int[]){
+            1, -1
+        },
+        (Action[]){
+            {"Talk to bartender", (action_type) talk_to_bartender},
+            {"Open menu", (action_type) menu_menu},
+            {nullptr, nullptr}
+        }
+    },
+    {
+        "Beginner Wilds",
+        "The unsafe region outside the Town of Beginnings",
+        (int[]){
+            0, -1
+        },
+        (Action[]){
+            {"Explore the wilds", (action_type) explore},
+            {"Open menu", (action_type) menu_menu},
+            {nullptr, nullptr}
+        }
+    }
+};
+
+const char *difficulty_names[4] = {"Easy", "Normal", "Challenge", "Nightmare"};
+const float difficulty_nums[4] = {0.8, 1.0, 1.2, 1.5};
 
 void print_header() {
     printf("******************************\n");
 }
 
-void print(Fighter f, int print_full_list) {
-    if (print_full_list) printf("%s: %s\n", stat_table[0].name, *((char**)&f + stat_table[0].offset));
+void print(Player *p, int print_full_list) {
+    if (print_full_list) printf("%s: %s\n", stat_table[0].name, *((char **) &p->fighter + stat_table[0].offset));
     for (int i = 0; i < (print_full_list ? STAT_COUNT : LEVELING_STAT_COUNT); i++) {
-        int *stat_ptr = (int*)((char*)&f + stat_table[i].offset);
+        int *stat_ptr = (int *) ((char *) &p->fighter + stat_table[i].offset);
         printf("%s: %d\n", stat_table[i].name, *stat_ptr);
     }
     if (!print_full_list) return;
-    printf("%s has %d coins.\n", p.fighter.name, p.coins);
+    printf("%s has %d coins.\n", p->fighter.name, p->coins);
 }
 
-void print_fighter_stats(Fighter f, int print_full_list) {
+void print_fighter_stats(Player *p, int print_full_list) {
     for (int i = print_full_list ? 0 : 1; i < (print_full_list ? STAT_COUNT : LEVELING_STAT_COUNT); i++) {
-        char *base = (char*)&f;
+        char *base = (char *) &p->fighter;
         char *ptr = base + stat_table[i].offset;
         switch (stat_table[i].type) {
-            case STAT_INT: printf("%s: %d\n", stat_table[i].name, *(int*)ptr); break;
-            case STAT_STRING: printf("%s: %s\n", stat_table[i].name, (char*)ptr); break;
+            case STAT_INT: printf("%s: %d\n", stat_table[i].name, *(int *) ptr);
+                break;
+            case STAT_STRING: printf("%s: %s\n", stat_table[i].name, (char *) ptr);
+                break;
         }
     }
 }
 
-void assign_stats() {
+void assign_stats(Player *p) {
     char str_in[10] = {0};
     char stat;
     int num_points = 0;
@@ -134,8 +229,8 @@ void assign_stats() {
 
     while (true) {
         print_header();
-        printf("Assign your stat points. Unassigned stat points: %d\n", p.unused_stat_points);
-        print_fighter_stats(p.fighter, 0);
+        printf("Assign your stat points. Unassigned stat points: %d\n", p->unused_stat_points);
+        print_fighter_stats(p, 0);
         printf("Enter first letter of stat name and # of points to be allocated separated by a space.\n");
         printf("Enter 'q' to quit allocation and leave unassigned stat points.\n");
 
@@ -146,37 +241,41 @@ void assign_stats() {
 
         printf("You entered: %d points into %c\n", num_points, stat);
 
-        if (num_points > p.unused_stat_points) {
+        if (num_points > p->unused_stat_points) {
             printf("You aren't that powerful yet...\n");
             continue;
         }
         switch (stat) {
-            case 'v': stat_ptr = &p.fighter.vitality; break;
-            case 's': stat_ptr = &p.fighter.strength; break;
-            case 'w': stat_ptr = &p.fighter.wisdom; break;
-            case 'd': stat_ptr = &p.fighter.dexterity; break;
+            case 'v': stat_ptr = &p->fighter.vitality;
+                break;
+            case 's': stat_ptr = &p->fighter.strength;
+                break;
+            case 'w': stat_ptr = &p->fighter.wisdom;
+                break;
+            case 'd': stat_ptr = &p->fighter.dexterity;
+                break;
             default:
                 printf("Invalid stat name.\n");
                 continue;
         }
         if (*stat_ptr + num_points < MAX_NEG_STAT) {
-            printf("You cannot sacrifice that much of this stat...");
+            printf("You cannot sacrifice that much of this stat...\n");
             continue;
         }
         *stat_ptr += num_points;
-        p.unused_stat_points -= num_points;
+        p->unused_stat_points -= num_points;
     }
 }
 
-void read_new_name() {
+void read_new_name(Player *p) {
     print_header();
     printf("Enter your name (10 char max):\n");
-    fgets(p.fighter.name, NAME_LEN, stdin);
-    // Replaces the \n character at the end of p.pfighter.name with \0 to make printing easier
-    p.fighter.name[strlen(p.fighter.name) - 1] = '\0';
+    fgets(p->fighter.name, NAME_LEN, stdin);
+    // Replaces the \n character at the end of p->pfighter.name with \0 to make printing easier
+    p->fighter.name[strlen(p->fighter.name) - 1] = '\0';
 }
 
-void settings_menu() {
+void menu_menu(Player *p, Region *r) {
     char str_in[10] = {0};
     char setting;
 
@@ -191,28 +290,76 @@ void settings_menu() {
         if (setting == 'q') return;
 
         switch (setting) {
-            case 'n': read_new_name(); break;
-            case 's': print_header(); print_fighter_stats(p.fighter, 1); break;
-            case 'a': assign_stats(); break;
+            case 'n':
+                read_new_name(p);
+                break;
+            case 's':
+                print_header();
+                print_fighter_stats(p, 1);
+                break;
+            case 'a':
+                assign_stats(p);
+                break;
             default:
                 printf("Invalid setting.\n");
         }
     }
 }
 
-void print_beginning_town_message() {
-    print_header();
-    printf("In the Town of Beginnings, %s has grown old enough to fulfil their dream: becoming an adventurer. It's time to begin your journey.\n", p.fighter.name);
+void region_menu(Player *p) {
+    char str_in[10] = {0};
+    char input;
+
+    while (true) {
+        Region *region = &world[p->position_id];
+
+        char menu_option = 'a';
+        print_header();
+        printf("%s\n%s\n", region->name, region->description);
+        for (int i = 0; region->region_actions[i].name != nullptr; i++) {
+            printf("'%c': %s\n", menu_option++, region->region_actions[i].name);
+        }
+        for (int i = 0; region->connections[i] != -1; i++) {
+            printf("'%c': Travel to %s\n", menu_option++, world[region->connections[i]].name);
+        }
+        fgets(str_in, sizeof(str_in), stdin);
+        sscanf(str_in, "%c", &input);
+        printf("%c\n", input);
+        menu_option = 'a';
+        for (int i = 0; region->region_actions[i].name != nullptr; i++) {
+            if (menu_option++ == input) {
+                region->region_actions[i].action_func(p, region);
+            }
+        }
+        for (int i = 0; region->connections[i] != -1; i++) {
+            if (menu_option++ == input) {
+                go_to(p, region->connections[i]);
+            }
+        }
+    }
 }
 
-void guild_receptionist_menu() {
+void go_to(Player *p, int id) {
+    p->position_id = id;
+}
+
+void admire(Player *p, Region *r) {
+    if (strcmp(r->name, world[0].name) == 0) {
+        print_header();
+        printf("In the Town of Beginnings, %s has grown old enough to fulfil their dream: becoming an adventurer. "
+            "It's time to begin your journey.\n",
+            p->fighter.name);
+    }
+}
+
+void talk_to_receptionist(Player *p, Region *r) {
     char str_in[10] = {0};
     char action;
 
     while (true) {
         print_header();
-        if (p.status_flags & GUILD_MEMBER) {
-            printf("Hello %s! What can I do for you?\n", p.fighter.name);
+        if (p->status_flags & GUILD_MEMBER) {
+            printf("Hello %s! What can I do for you?\n", p->fighter.name);
             printf("'v' to view guild status, 'r' to return to the guild hall\n");
             fgets(str_in, sizeof(str_in), stdin);
             sscanf(str_in, "%c", &action);
@@ -221,20 +368,21 @@ void guild_receptionist_menu() {
                     printf("You are in the adventurer's guild.\n");
                     return;
                 case 'r':
-                    printf("See you again soon, %s!", p.fighter.name);
+                    printf("See you again soon, %s!", p->fighter.name);
                     return;
                 default:
                     printf("Invalid action.\n");
             }
         } else {
-            printf("Hello %s! Finally ready to register with the guild?\n", p.fighter.name);
+            printf("Hello %s! Finally ready to register with the guild?\n", p->fighter.name);
             printf("'y' to register with the guild,\n'n' to put it off\n");
             fgets(str_in, sizeof(str_in), stdin);
             sscanf(str_in, "%c", &action);
             switch (action) {
                 case 'y':
-                    p.status_flags |= GUILD_MEMBER;
-                    printf("I'm sure you've been looking forward to this. You are now officially part of the adventurer's guild!\n");
+                    p->status_flags |= GUILD_MEMBER;
+                    printf(
+                        "I'm sure you've been looking forward to this. You are now officially part of the adventurer's guild!\n");
                     return;
                 case 'n':
                     printf("Not now then? Just make sure you register before leaving town!\n");
@@ -246,174 +394,134 @@ void guild_receptionist_menu() {
     }
 }
 
-void beginning_guild_menu() {
-    char str_in[10] = {0};
-    char action;
-
-    while (true) {
-        print_header();
-        printf("You are in the Town of Beginnings guild hall.\n");
-        printf("'r' to speak to the receptionist,\n'l' to leave the guild hall and return to the Town of Beginnings,\n's' to view your settings\n");
-        fgets(str_in, sizeof(str_in), stdin);
-        sscanf(str_in, "%c", &action);
-        switch (action) {
-            case 'r':
-                guild_receptionist_menu();
-                break;
-            case 'l':
-                return;
-            case 's':
-                settings_menu();
-                break;
-            default:
-                printf("Invalid action.\n");
-        }
-    }
+void talk_to_bartender(Player *p, Region *r) {
 }
 
-void fight();
+void explore(Player *p, Region *r) {
+}
 
-void become_beginner_wilds_expert(const char *action_name) {
-    p.status_flags |= BEGINNER_WILDS_EXPERT;
+void forage(Player *p, Region *r) {
+}
+
+void fish(Player *p, Region *r) {
+}
+
+void battle(Player *p, Region *r) {
+}
+
+void become_beginner_wilds_expert(Player *p, const char *action_name) {
+    p->status_flags |= BEGINNER_WILDS_EXPERT;
 
     printf("Your %s made you an expert on the beginner wilds!\n", action_name);
     printf("You can now choose which actions you wish to perform in the beginner wilds.\n");
 }
 
-void herb_collecting() {
-    printf("You gather herbs.\n");
-}
+// void beginner_wilds_menu() {
+//     char str_in[10] = {0};
+//     char action;
+//
+//     Action world_actions[] = {};
+//     //        {"herb collecting", (action_type) herb_collecting},
+//     //        {"fishing", (action_type) fishing},
+//     //        {"battling", (action_type) battling}
+//     //    };
+//
+//     while (true) {
+//         int fortune = rand() % 10;
+//
+//         print_header();
+//         printf("You are in the beginner wilds, outside of the Town of Beginnings.\n");
+//         if (p->status_flags & BEGINNER_WILDS_EXPERT) {
+//             printf("'b' to do battle in the wilds, 'g' to gather herbs, 'f' to go fishing\n");
+//         } else {
+//             printf("'e' to explore the wilds,\n");
+//         }
+//         printf("'l' to leave the beginner wilds and return to the Town of Beginnings,\n's' to view your settings\n");
+//         fgets(str_in, sizeof(str_in), stdin);
+//         sscanf(str_in, "%c", &action);
+//
+//         if (action == 'l') return;
+//
+//         switch (action) {
+//             case 'e':
+//                 if (p->status_flags & BEGINNER_WILDS_EXPERT) {
+//                     printf("You already know the beginner wilds like the back of your hand.\n");
+//                     break;
+//                 }
+//                 if (fortune < 5) {
+//                     // herb collecting
+//                     world_actions[0].action_func(&world[0], p);
+//                 } else if (fortune < 7) {
+//                     // fishing
+//                     world_actions[1].action_func(&world[0]);
+//                 } else {
+//                     // battling
+//                     world_actions[2].action_func(&world[0]);
+//                 }
+//                 break;
+//             case 'g':
+//                 if (p->status_flags & BEGINNER_WILDS_EXPERT) {
+//                     // gather herbs
+//                     world_actions[0].action_func(&world[0]);
+//                 } else {
+//                     printf("As if you'd seen a vision, you knew exactly where the herbs were!\n");
+//                     become_beginner_wilds_expert(world_actions[0].name);
+//                 }
+//                 break;
+//             case 'f':
+//                 if (p->status_flags & BEGINNER_WILDS_EXPERT) {
+//                     // go fishing
+//                     world_actions[1].action_func(&world[0]);
+//                 } else {
+//                     printf("As if you'd seen a vision, you knew exactly where the fishing spots were!\n");
+//                     become_beginner_wilds_expert(world_actions[1].name);
+//                 }
+//                 break;
+//             case 'b':
+//                 if (!(p->status_flags & BEGINNER_WILDS_EXPERT)) {
+//                     printf("As if you'd seen a vision, you knew exactly where the monsters were!\n");
+//                     become_beginner_wilds_expert(world_actions[2].name);
+//                 }
+//                 world_actions[2].action_func(&world[0]);
+//                 break;
+//             case 's':
+//                 menu_menu();
+//                 break;
+//             default:
+//                 printf("Invalid action.\n");
+//         }
+//     }
+// }
 
-void fishing() {
-    printf("You go fishing.\n");
-}
-
-void battling() {
-    printf("You do battle with some monsters!\n");
-}
-
-void beginner_wilds_menu() {
-    char str_in[10] = {0};
-    char action;
-
-    Action world_actions[] = {
-        {"herb collecting", herb_collecting},
-        {"fishing", fishing},
-        {"battling", battling}
-    };
-
-    while (true) {
-        int fortune = rand() % 10;
-
-        print_header();
-        printf("You are in the beginner wilds, outside of the Town of Beginnings.\n");
-        if (p.status_flags & BEGINNER_WILDS_EXPERT) {
-            printf("'b' to do battle in the wilds, 'g' to gather herbs, 'f' to go fishing\n");
-        } else {
-            printf("'e' to explore the wilds,\n");
-        }
-        printf("'l' to leave the beginner wilds and return to the Town of Beginnings,\n's' to view your settings\n");
-        fgets(str_in, sizeof(str_in), stdin);
-        sscanf(str_in, "%c", &action);
-
-        if (action == 'l') return;
-
-        switch (action) {
-            case 'e':
-                if (p.status_flags & BEGINNER_WILDS_EXPERT) {
-                    printf("You already know the beginner wilds like the back of your hand.\n");
-                    break;
-                }
-                if (fortune < 5) {
-                    // herb collecting
-                    world_actions[0].action_func();
-                } else if (fortune < 7) {
-                    // fishing
-                    world_actions[1].action_func();
-                } else {
-                    // battling
-                    world_actions[2].action_func();
-                }
-                break;
-            case 'g':
-                if (p.status_flags & BEGINNER_WILDS_EXPERT) {
-                    // gather herbs
-                    world_actions[0].action_func();
-                } else {
-                    printf("As if you'd seen a vision, you knew exactly where the herbs were!\n");
-                    become_beginner_wilds_expert(world_actions[0].name);
-                }
-                break;
-            case 'f':
-                if (p.status_flags & BEGINNER_WILDS_EXPERT) {
-                    // go fishing
-                    world_actions[1].action_func();
-                } else {
-                    printf("As if you'd seen a vision, you knew exactly where the fishing spots were!\n");
-                    become_beginner_wilds_expert(world_actions[1].name);
-                }
-                break;
-            case 'b':
-                if (!(p.status_flags & BEGINNER_WILDS_EXPERT)) {
-                    printf("As if you'd seen a vision, you knew exactly where the monsters were!\n");
-                    become_beginner_wilds_expert(world_actions[2].name);
-                }
-                world_actions[2].action_func();
-                break;
-            case 's':
-                settings_menu();
-                break;
-            default:
-                printf("Invalid action.\n");
-        }
-    }
-}
-
-void beginning_town_menu() {
-    char str_in[10] = {0};
-    char action;
-
-    while (true) {
-        print_header();
-        printf("You are in the Town of Beginnings.\n");
-        printf("'g' to visit the guild,\n'l' to leave and enter beginner wilds,\n's' to view your settings\n");
-        fgets(str_in, sizeof(str_in), stdin);
-        sscanf(str_in, "%c", &action);
-        switch (action) {
-            case 'g':
-                beginning_guild_menu();
-                break;
-            case 'l':
-                beginner_wilds_menu();
-                break;
-            case 's':
-                settings_menu();
-                break;
-            default:
-                printf("Invalid action.\n");
-        }
-    }
-}
-
-int main(int argsc, char* argsv[]) {
+int main(int argsc, char *argsv[]) {
     // Seed random number generation
     srand(time(nullptr));
 
-    p = {{"DOE", 1, 1, 1, 1, 1, 10, 10, 00000000}, 3, (rand() % 3 + 3), 0, 0, 00000000};
+    Player p = {{"DOE", 1, 1, 1, 1, 1, 10, 10, 00000000}, 3, (rand() % 3 + 3), 0, 0, 0, 00000000};
 
     printf("\n");
     print_header();
     printf("********** TERMINUS **********\n");
-    read_new_name();
-    printf("\nWelcome to TERMINUS, %s.\n", p.fighter.name);
-    assign_stats();
-    print_beginning_town_message();
-    beginning_town_menu();
+    read_new_name(&p);
+    printf("Welcome to TERMINUS, %s.\n", p.fighter.name);
+    assign_stats(&p);
+    region_menu(&p);
 
     return 0;
 }
 
-/* Battle sequence is determined by dex: player gets one action per 20(50/(50+DEX))+5.
+/* TODO
+ * Maybe? assign stats redo char key list to be consistent with region_menu
+ *
+ * Fix declining receptionist kicking player back to desk region
+ *
+ * Battle sequence is determined by dex: player gets one action per 20(50/(50+DEX))+5.
  * So absolute minimum turns per battle tick is 5 (bc rounding), but requires 950 dex to achieve
  * Soft caps actions at one per 10/11 ticks
+ *
+ * Inventory
+ *
+ * Equipment
+ *
+ * Quests
  */
