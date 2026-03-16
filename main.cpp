@@ -27,6 +27,90 @@ enum Difficulty {
 #define GUILD_MEMBER (1 << 2)
 #define BEGINNER_WILDS_EXPERT (1 << 3)
 
+
+typedef enum {
+    ITEM_MISC,
+    ITEM_CONSUMABLE,
+    ITEM_EQUIPMENT,
+    ITEM_QUEST
+} ItemType;
+
+typedef enum {
+    SLOT_HELMET,
+    SLOT_CHEST,
+    SLOT_CHARM,
+    SLOT_WEAPON
+} SlotType;
+
+typedef struct {
+    int vitality;
+    int strength;
+    int wisdom;
+    int dexterity;
+} ItemStatModifier;
+
+typedef struct {
+    ItemStatModifier stat_bonus;
+    SlotType slot;
+} EquipmentItemData;
+
+typedef struct {
+    int quest_id;
+} QuestItemData;
+
+typedef struct {
+    int id;
+    const char *name;
+    const char *description;
+    ItemType item_type;
+    union {
+        EquipmentItemData equipment_item_data;
+        QuestItemData quest_item_data;
+    } data;
+} Item;
+
+#define ITEM_NONE (-1)
+enum {
+    ITEM_GUILD_BADGE,
+    ITEM_RUSTY_KNIFE,
+    ITEM_BEGINNER_HERB
+};
+
+Item items[] = {
+    {
+        ITEM_GUILD_BADGE,
+        "Guild badge",
+        "A badge denoting you as a member of the adventurer's guild",
+        ITEM_QUEST
+    },
+    {
+        ITEM_RUSTY_KNIFE,
+        "Rusty knife",
+        "A rusty knife, good enough for some beginner enemies",
+        ITEM_EQUIPMENT
+    },
+    {
+        ITEM_BEGINNER_HERB,
+        "Beginner herb",
+        "An herb found around the town of beginnings, restores a small amount of health when used",
+        ITEM_CONSUMABLE
+    }
+};
+
+typedef struct {
+    int item_id;
+    int quantity;
+} InventorySlot;
+
+#define INVENTORY_START_SIZE 4
+#define INVENTORY_MAX_SIZE 32
+
+typedef struct {
+    InventorySlot inventory[INVENTORY_MAX_SIZE];
+    int num_items;
+    int curr_max_size;
+} Inventory;
+
 typedef struct {
     char name[NAME_LEN];
 
@@ -56,6 +140,7 @@ typedef struct {
     int experience;
     int reputation;
     int guild_reputation;
+    Inventory inventory;
 
     // statuses
     int position_id;
@@ -93,7 +178,6 @@ StatEntry fighter_stat_table[] = {
 
 typedef void (*action_type)(Player *, void *);
 
-// Used to define world actions such as picking herbs or fishing
 typedef struct {
     const char *name;
     action_type action_func;
@@ -228,6 +312,98 @@ void print_fighter_stats(Player *p, int print_full_list) {
     }
 }
 
+void print_inv_change_dialogue(Player *p, int item_id, int quant, int gain) {
+    Item item = items[item_id];
+    const char *text = gain ? "got" : "lost";
+
+    if (quant == 1) {
+        printf("%s %s the %s!\n", p->fighter.name, text, item.name);
+        return;
+    }
+    printf("%s %s x%d %s!\n", p->fighter.name, text, quant, item.name);
+}
+
+int add_item(Inventory *inv, int item_id, int quant) {
+    // If the player is already carrying an item of that type, add to the stack
+    for (int i = 0; i < inv->num_items; i++) {
+        if (inv->inventory[i].item_id == item_id) {
+            inv->inventory[i].quantity += quant;
+            return 1;
+        }
+    }
+    if (inv->num_items < inv->curr_max_size) {
+        // If the player's inventory does have an open slot, add the item
+        inv->inventory[inv->num_items++] = (InventorySlot){item_id, quant};
+        return 1;
+    }
+    // If the player's inventory has no open slots, return
+    printf("Inventory full!\n");
+    return 0;
+}
+
+int remove_item(Inventory *inv, int item_id, int quant) {
+    for (int i = 0; i < inv->num_items; i++) {
+        if (inv->inventory[i].item_id == item_id) {
+            // If item has 0 or less quantity, shift every item proceeding it left to remove it
+            if (inv->inventory[i].quantity <= 0) {
+                for (int j = i; j < inv->num_items - 1; j++) {
+                    if (j == INVENTORY_MAX_SIZE - 1) {
+                        // If the last slot needs to be emptied, put an ITEM_NONE, 0 in it
+                        inv->inventory[j] = (InventorySlot){ITEM_NONE, 0};
+                    } else {
+                        // Copy item from the right
+                        inv->inventory[j] = inv->inventory[j + 1];
+                    }
+                }
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int change_player_inventory(Player *p, int item_id, int quant) {
+    if (quant == 0) return 0;
+    // Check if item is being added or removed
+    int adding_to_inventory = quant > 0 ? 1 : 0;
+    // Based on addition or removal, attempt inventory change and store result
+    int result = adding_to_inventory ? add_item(&p->inventory, item_id, quant) : remove_item(&p->inventory, item_id, quant);
+    // If inventory change is successful, print the change
+    if (result) print_inv_change_dialogue(p, item_id, quant, adding_to_inventory);
+    return result;
+}
+
+int has_item(Inventory *inv, int item_id, int quant) {
+    for (int i = 0; i < inv->num_items; i++) {
+        if (inv->inventory[i].item_id == item_id && inv->inventory[i].quantity >= quant) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void print_inventory(Inventory *inv, int print_full_list) {
+    printf("Inventory:\n");
+    if (inv->num_items <= 0) {
+        printf("Empty...\n");
+        return;
+    }
+    for (int i = 0; i < inv->num_items; i++) {
+        Item item = items[inv->inventory[i].item_id];
+        // Always print 'name xQuantity'
+        printf("%s x%d", item.name, inv->inventory[i].quantity);
+        // If detailed print, then add ' - 'description'' and a newline
+        if (print_full_list) {
+            printf(" - '%s'\n", item.description);
+            continue;
+        }
+        // Otherwise, add ', '
+        if (i == inv->num_items - 1) continue;
+        printf(", ");
+    }
+    if (!print_full_list) printf("\n");
+}
+
 void assign_stats(Player *p) {
     char str_in[10] = {0};
     char stat;
@@ -289,7 +465,8 @@ void menu_menu(Player *p, Region *r) {
     while (true) {
         print_header();
         printf("View your settings:\n");
-        printf("'n' to change name,\n's' to view stats,\n'a' to allocate stats,\nor 'q' to quit settings\n");
+        printf("'n' to change name,\n's' to view stats,\n'a' to allocate stats,\n"
+            "'i' to view inventory ('d' for detailed mode)\nor 'q' to quit settings\n");
 
         fgets(str_in, sizeof(str_in), stdin);
         sscanf(str_in, "%c", &setting);
@@ -306,6 +483,12 @@ void menu_menu(Player *p, Region *r) {
                 break;
             case 'a':
                 assign_stats(p);
+                break;
+            case 'i':
+                print_inventory(&p->inventory, 0);
+                break;
+            case 'd':
+                print_inventory(&p->inventory, 1);
                 break;
             default:
                 printf("Invalid setting.\n");
@@ -365,7 +548,55 @@ void talk_to_receptionist(Player *p, Region *r) {
     char action;
 
     while (true) {
+        int is_guild_member = p->status_flags & GUILD_MEMBER;
+
         print_header();
+
+        if (is_guild_member) {
+            printf("Hello %s! What can I do for you?\n", p->fighter.name);
+            printf("'v' to view guild status, 'r' to return to the guild hall\n");
+        } else {
+            printf("Hello %s! Finally ready to register with the guild?\n", p->fighter.name);
+            printf("'y' to register with the guild,\n'n' to put it off\n");
+        }
+
+        fgets(str_in, sizeof(str_in), stdin);
+        sscanf(str_in, "%c", &action);
+
+        switch (action) {
+            // Dialoge for guild member
+            case 'v':
+                if (!is_guild_member) break;
+                printf("You are in the adventurer's guild.\n");
+                if (has_item(&p->inventory, ITEM_GUILD_BADGE, 1)) {
+                    printf("Great job holding on to your guild badge!\n");
+                } else {
+                    printf("Looks like you lost your guild badge, %s...\n", p->fighter.name);
+                }
+                continue;
+            case 'r':
+                printf("See you again soon, %s!\n", p->fighter.name);
+                return;
+            // Dialogue for non-guild member
+            case 'y':
+                if (is_guild_member) break;
+                if (give_item_to_player(p, ITEM_GUILD_BADGE, 1)) {
+                    p->status_flags |= GUILD_MEMBER;
+                    printf("I'm sure you've been looking forward to this. "
+                        "You are now officially part of the adventurer's guild!\n");
+                    printf("If you lose your guild badge, I can replace it for you for only a few coins.");
+                } else {
+                    printf("Come back when your hands aren't full, %s!", p->fighter.name);
+                }
+                continue;
+            case 'n':
+                if (is_guild_member) break;
+                printf("Not now then? Just make sure you register before leaving town!\n");
+                return;
+            default:
+                printf("Invalid action.\n");
+        }
+
         if (p->status_flags & GUILD_MEMBER) {
             printf("Hello %s! What can I do for you?\n", p->fighter.name);
             printf("'v' to view guild status, 'r' to return to the guild hall\n");
@@ -382,15 +613,18 @@ void talk_to_receptionist(Player *p, Region *r) {
                     printf("Invalid action.\n");
             }
         } else {
-            printf("Hello %s! Finally ready to register with the guild?\n", p->fighter.name);
-            printf("'y' to register with the guild,\n'n' to put it off\n");
             fgets(str_in, sizeof(str_in), stdin);
             sscanf(str_in, "%c", &action);
             switch (action) {
                 case 'y':
-                    p->status_flags |= GUILD_MEMBER;
-                    printf(
-                        "I'm sure you've been looking forward to this. You are now officially part of the adventurer's guild!\n");
+                    if (change_player_inventory(p, ITEM_GUILD_BADGE, 1)) {
+                        p->status_flags |= GUILD_MEMBER;
+                        printf("I'm sure you've been looking forward to this. "
+                            "You are now officially part of the adventurer's guild!\n");
+                        printf("If you lose your guild badge, I can replace it for you for only a few coins.");
+                    } else {
+                        printf("Come back when your hands aren't full, %s!", p->fighter.name);
+                    }
                     continue;
                 case 'n':
                     printf("Not now then? Just make sure you register before leaving town!\n");
@@ -505,7 +739,7 @@ int main(int argsc, char *argsv[]) {
     // Seed random number generation
     srand(time(nullptr));
 
-    Player p = {{"DOE", 1, 1, 1, 1, 1, 10, 10, 00000000}, 3, (rand() % 3 + 3), 0, 0, 0, 00000000};
+    Player p = {{"DOE", 1, 1, 1, 1, 1, 10, 10, 00000000}, 3, (rand() % 3 + 3), 0, 0, 0, {{}, 0, 32},00000000};
 
     printf("\n");
     print_header();
