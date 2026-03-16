@@ -53,6 +53,7 @@ typedef struct {
 
     // resources
     int coins;
+    int experience;
     int reputation;
     int guild_reputation;
 
@@ -75,7 +76,7 @@ typedef struct {
     StatType type;
 } StatEntry;
 
-StatEntry stat_table[] = {
+StatEntry fighter_stat_table[] = {
     {'n', "Name", offsetof(Fighter, name), STAT_STRING},
     {'v', "Vitality", offsetof(Fighter, vitality), STAT_INT},
     {'s', "Strength", offsetof(Fighter, strength), STAT_INT},
@@ -87,7 +88,7 @@ StatEntry stat_table[] = {
     {'e', "Effects", offsetof(Fighter, battle_status_effects), STAT_INT}
 };
 
-#define STAT_COUNT (sizeof(stat_table)/sizeof(StatEntry))
+#define STAT_COUNT (sizeof(fighter_stat_table)/sizeof(StatEntry))
 #define LEVELING_STAT_COUNT 5
 
 typedef void (*action_type)(Player *, void *);
@@ -199,10 +200,10 @@ void print_header() {
 }
 
 void print(Player *p, int print_full_list) {
-    if (print_full_list) printf("%s: %s\n", stat_table[0].name, *((char **) &p->fighter + stat_table[0].offset));
+    if (print_full_list) printf("%s: %s\n", fighter_stat_table[0].name, *((char **) &p->fighter + fighter_stat_table[0].offset));
     for (int i = 0; i < (print_full_list ? STAT_COUNT : LEVELING_STAT_COUNT); i++) {
-        int *stat_ptr = (int *) ((char *) &p->fighter + stat_table[i].offset);
-        printf("%s: %d\n", stat_table[i].name, *stat_ptr);
+        int *stat_ptr = (int *) ((char *) &p->fighter + fighter_stat_table[i].offset);
+        printf("%s: %d\n", fighter_stat_table[i].name, *stat_ptr);
     }
     if (!print_full_list) return;
     printf("%s has %d coins.\n", p->fighter.name, p->coins);
@@ -211,11 +212,17 @@ void print(Player *p, int print_full_list) {
 void print_fighter_stats(Player *p, int print_full_list) {
     for (int i = print_full_list ? 0 : 1; i < (print_full_list ? STAT_COUNT : LEVELING_STAT_COUNT); i++) {
         char *base = (char *) &p->fighter;
-        char *ptr = base + stat_table[i].offset;
-        switch (stat_table[i].type) {
-            case STAT_INT: printf("%s: %d\n", stat_table[i].name, *(int *) ptr);
+        char *ptr = base + fighter_stat_table[i].offset;
+        switch (fighter_stat_table[i].type) {
+            case STAT_INT:
+                if (fighter_stat_table[i].key == 'm') {
+                    // Should print HP as curr/max and properly increment i
+                    printf("%s: %d/%d\n", fighter_stat_table[++i].name, *(int *) ptr, *(int *)(base + fighter_stat_table[i].offset));
+                    break;
+                }
+                printf("%s: %d\n", fighter_stat_table[i].name, *(int *) ptr);
                 break;
-            case STAT_STRING: printf("%s: %s\n", stat_table[i].name, (char *) ptr);
+            case STAT_STRING: printf("%s: %s\n", fighter_stat_table[i].name, (char *) ptr);
                 break;
         }
     }
@@ -322,9 +329,10 @@ void region_menu(Player *p) {
         for (int i = 0; region->connections[i] != -1; i++) {
             printf("'%c': Travel to %s\n", menu_option++, world[region->connections[i]].name);
         }
+
         fgets(str_in, sizeof(str_in), stdin);
         sscanf(str_in, "%c", &input);
-        printf("%c\n", input);
+
         menu_option = 'a';
         for (int i = 0; region->region_actions[i].name != nullptr; i++) {
             if (menu_option++ == input) {
@@ -366,9 +374,9 @@ void talk_to_receptionist(Player *p, Region *r) {
             switch (action) {
                 case 'v':
                     printf("You are in the adventurer's guild.\n");
-                    return;
+                    continue;
                 case 'r':
-                    printf("See you again soon, %s!", p->fighter.name);
+                    printf("See you again soon, %s!\n", p->fighter.name);
                     return;
                 default:
                     printf("Invalid action.\n");
@@ -383,7 +391,7 @@ void talk_to_receptionist(Player *p, Region *r) {
                     p->status_flags |= GUILD_MEMBER;
                     printf(
                         "I'm sure you've been looking forward to this. You are now officially part of the adventurer's guild!\n");
-                    return;
+                    continue;
                 case 'n':
                     printf("Not now then? Just make sure you register before leaving town!\n");
                     return;
@@ -511,15 +519,14 @@ int main(int argsc, char *argsv[]) {
 }
 
 /* TODO
- * Maybe? assign stats redo char key list to be consistent with region_menu
+ * Maybe? Remove global world: put world in player or put world in main and pass it around
+ * Maybe? make stat allocation char key list to be consistent with region_menu
  *
- * Fix declining receptionist kicking player back to desk region
+ * Inventory
  *
  * Battle sequence is determined by dex: player gets one action per 20(50/(50+DEX))+5.
  * So absolute minimum turns per battle tick is 5 (bc rounding), but requires 950 dex to achieve
  * Soft caps actions at one per 10/11 ticks
- *
- * Inventory
  *
  * Equipment
  *
