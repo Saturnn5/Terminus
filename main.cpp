@@ -27,7 +27,6 @@ enum Difficulty {
 #define GUILD_MEMBER (1 << 2)
 #define BEGINNER_WILDS_EXPERT (1 << 3)
 
-
 typedef enum {
     ITEM_MISC,
     ITEM_CONSUMABLE,
@@ -129,7 +128,53 @@ typedef struct {
     unsigned int battle_status_effects;
 } Fighter;
 
+struct Player;
+
+#define MAX_QUESTS 32
+
+typedef enum {
+    OBJ_GATHER_ITEM,
+    OBJ_VISIT_AREA,
+    OBJ_MEET_NPC,
+    OBJ_REACH_LEVEL,
+    OBJ_CUSTOM
+} ObjectiveType;
+
+typedef int (*CheckCompletion)(struct Objective *obj, Player *p);
+
+typedef struct Objective {
+    ObjectiveType type;
+    int target_id;   // item ID, area ID, NPC ID, or level
+    int quantity;
+    int progress;    // track completion
+    CheckCompletion completion_func;
+} Objective;
+
+int check_gather_item(Objective *obj, Player *p);
+int check_visit_area(Objective *obj, Player *p);
+int check_visit_npc(Objective *obj, Player *p);
+int check_reach_level(Objective *obj, Player *p);
+
 typedef struct {
+    int coins;
+    int experience;
+    int item_id;     // use ITEM_NONE if no item reward
+    int item_quantity;
+} QuestReward;
+
+#define MAX_OBJECTIVES 4
+
+typedef struct {
+    int quest_id;
+    const char *name;
+    const char *description;
+    int num_objectives;
+    Objective objectives[MAX_OBJECTIVES];
+    QuestReward reward;
+    int completed;
+} Quest;
+
+typedef struct Player {
     Fighter fighter;
 
     // stats
@@ -141,9 +186,13 @@ typedef struct {
     int reputation;
     int guild_reputation;
     Inventory inventory;
+    int num_quests;
+    Quest active_quests[MAX_QUESTS];
+
 
     // statuses
     int position_id;
+    unsigned int npc_flags;     // stores which NPCs the player has met
     unsigned int status_flags;
 } Player;
 
@@ -195,6 +244,8 @@ void region_menu(Player *);
 void go_to(Player *, int id);
 
 void admire(Player *, Region *);
+
+void check_quest_board(Player *, Region *);
 
 void talk_to_receptionist(Player *, Region *);
 
@@ -344,6 +395,7 @@ int add_item(Inventory *inv, int item_id, int quant) {
 int remove_item(Inventory *inv, int item_id, int quant) {
     for (int i = 0; i < inv->num_items; i++) {
         if (inv->inventory[i].item_id == item_id) {
+            inv->inventory[i].quantity -= quant;
             // If item has 0 or less quantity, shift every item proceeding it left to remove it
             if (inv->inventory[i].quantity <= 0) {
                 for (int j = i; j < inv->num_items - 1; j++) {
@@ -450,6 +502,48 @@ void assign_stats(Player *p) {
     }
 }
 
+int check_gather_item(Objective *obj, Player *p) {
+    for (int i = 0; i < p->inventory.num_items; i++) {
+        if (p->inventory.inventory[i].item_id == obj->target_id) {
+            obj->progress = p->inventory.inventory[i].quantity > obj->quantity;
+        }
+    }
+    return obj->progress;
+}
+int check_visit_area(Objective *obj, Player *p) {
+    obj->progress = p->position_id == obj->target_id;
+    return obj->progress;
+}
+int check_visit_npc(Objective *obj, Player *p) {
+    // Won't work - modify to get npc from a list
+    obj->progress = p->npc_flags & obj->target_id;
+    return obj->progress;
+}
+int check_reach_level(Objective *obj, Player *p) {
+    obj->progress = p->fighter.level >= obj->target_id;
+    return obj->progress;
+}
+
+void evaluate_quest(Quest *q, Player *p) {
+    int completed = 1;
+    for (int i = 0; i < q->num_objectives; i++) {
+        Objective *obj = &q->objectives[i];
+        if (!obj->completion_func(obj, p)) {
+            completed = 0;
+        }
+    }
+    if (completed && !q->completed) {
+        printf("Quest completed: %s\n", q->name);
+        q->completed = 1;
+
+        QuestReward *reward = &q->reward;
+        // Give reward
+        if (reward->coins) p->coins += reward->coins;
+        if (reward->experience) p->experience += reward->experience;
+        if (reward->item_id != ITEM_NONE) change_player_inventory(p, reward->item_id, reward->item_quantity);
+    }
+}
+
 void read_new_name(Player *p) {
     print_header();
     printf("Enter your name (10 char max):\n");
@@ -532,14 +626,31 @@ void region_menu(Player *p) {
 
 void go_to(Player *p, int id) {
     p->position_id = id;
+    // check for position related quest completion
+    for (int i = 0; i < p->num_quests; i++) {
+        evaluate_quest(&p->active_quests[i], p);
+    }
 }
 
 void admire(Player *p, Region *r) {
+    print_header();
     if (strcmp(r->name, world[0].name) == 0) {
-        print_header();
         printf("In the Town of Beginnings, %s has grown old enough to fulfil their dream: becoming an adventurer. "
             "It's time to begin your journey.\n",
             p->fighter.name);
+    }
+}
+
+
+
+void check_quest_board(Player *p, Region *r) {
+    char str_in[10] = {0};
+    char action;
+
+    print_header();
+    if (strcmp(r->name, world[2].name) == 0) {
+        printf("The guild's quest board is covered in quest notices. Three of them catch your eye:");
+
     }
 }
 
@@ -580,7 +691,7 @@ void talk_to_receptionist(Player *p, Region *r) {
             // Dialogue for non-guild member
             case 'y':
                 if (is_guild_member) break;
-                if (give_item_to_player(p, ITEM_GUILD_BADGE, 1)) {
+                if (change_player_inventory(p, ITEM_GUILD_BADGE, 1)) {
                     p->status_flags |= GUILD_MEMBER;
                     printf("I'm sure you've been looking forward to this. "
                         "You are now officially part of the adventurer's guild!\n");
@@ -739,7 +850,9 @@ int main(int argsc, char *argsv[]) {
     // Seed random number generation
     srand(time(nullptr));
 
-    Player p = {{"DOE", 1, 1, 1, 1, 1, 10, 10, 00000000}, 3, (rand() % 3 + 3), 0, 0, 0, {{}, 0, 32},00000000};
+    Player p = {
+        {"DOE", 1, 1, 1, 1, 1, 10, 10, 00000000}, 3, (rand() % 3 + 3), 0, 0, 0, {{}, 0, 32}, 0, 0, {}, 00000000, 00000000
+    };
 
     printf("\n");
     print_header();
@@ -756,13 +869,12 @@ int main(int argsc, char *argsv[]) {
  * Maybe? Remove global world: put world in player or put world in main and pass it around
  * Maybe? make stat allocation char key list to be consistent with region_menu
  *
- * Inventory
- *
  * Battle sequence is determined by dex: player gets one action per 20(50/(50+DEX))+5.
  * So absolute minimum turns per battle tick is 5 (bc rounding), but requires 950 dex to achieve
  * Soft caps actions at one per 10/11 ticks
  *
  * Equipment
  *
- * Quests
+ * Store NPCs and their dialogue in a table and only have one method for every NPC, like regions
+ * use in quest completion checks
  */
