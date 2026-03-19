@@ -869,6 +869,10 @@ int main(int argsc, char *argsv[]) {
  * Maybe? Remove global world: put world in player or put world in main and pass it around
  * Maybe? make stat allocation char key list to be consistent with region_menu
  *
+ * Refactor NPCs to use a dialogue tree using dialogue nodes:
+ * Nodes would contain an ID, message, and two pointers to other nodes
+ * Maybe also have a menu node which would contain up to four pointers instead of two
+ *
  * Battle sequence is determined by dex: player gets one action per 20(50/(50+DEX))+5.
  * So absolute minimum turns per battle tick is 5 (bc rounding), but requires 950 dex to achieve
  * Soft caps actions at one per 10/11 ticks
