@@ -3,4 +3,4 @@ project(Terminus)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(Terminus main.cpp)
+add_executable(Terminus main.c)
